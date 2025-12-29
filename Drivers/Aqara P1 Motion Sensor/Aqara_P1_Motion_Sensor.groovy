@@ -1666,23 +1666,23 @@ def temperatureEvent( temperature ) {
     if (isFP300()) {
         def child = getChildTempHumidityDevice()
         if (child) {
-            def map = [:] 
-            map.name = "temperature"
-            map.unit = "\u00B0"+"C"
-            def tempOffset = settings?.tempOffset ?: 0
-            
+            def map = [
+                name: "temperature",
+                unit: "\u00B0C",
+                type: "physical"
+            ]
+                
             if ( location.temperatureScale == "F") {
                 temperature = (temperature * 1.8) + 32
                 map.unit = "\u00B0"+"F"
             }
-            
-            def tempConverted = temperature + tempOffset
-            map.value = Math.round(tempConverted * 10) / 10.0  // Round to 1 decimal place
-            map.type = "physical"
-            map.isStateChange = true
-            
-            if (settings?.txtEnable) {log.info "${device.displayName} temperature is ${map.value} ${map.unit} (via child device)"}
-            child.parse([[name: map.name, value: map.value, unit: map.unit, type: map.type, descriptionText: "${child.displayName} temperature is ${map.value} ${map.unit}", isStateChange: map.isStateChange]])
+
+            def tempConverted = temperature + settings?.tempOffset ?: 0
+            map.value = new BigDecimal(tempConverted).setScale(1, BigDecimal.ROUND_HALF_UP)  // Round to 1 decimal place
+            map.descriptionText = "${child.displayName} temperature is ${map.value} ${map.unit}"
+
+            if (settings?.txtEnable) {log.info "${map.descriptionText} (via child device)"}
+            child.parse([map])
         } else {
             log.warn "${device.displayName} FP300 child device not found for temperature event"
         }
@@ -1768,15 +1768,22 @@ def humidityEvent( humidity ) {
         if (child) {
             // Apply humidity offset
             def humidityOffset = settings?.humidityOffset ?: 0
-            def humidityAdjusted = humidity + humidityOffset
-            
+
             // Ensure humidity is within valid range (0-100%)
-            def humidityValue = Math.round(humidityAdjusted as Double)
-            if (humidityValue < 0) humidityValue = 0
-            if (humidityValue > 100) humidityValue = 100
-            def isStateChange = true
-            if (settings?.txtEnable) log.info "${device.displayName} humidity is ${humidityValue}% (via child device)"
-            child.parse([[name: "humidity", value: humidityValue, unit: "%", type: "physical", descriptionText: "${child.displayName} humidity is ${humidityValue}%", isStateChange: isStateChange]])
+            def humidityValue = Math.round(humidity + humidityOffset as Double)
+            humidityValue = Math.max(0, humidityValue)
+            humidityValue = Math.min(100, humidityValue)
+
+            def map = [
+                name: "humidity",
+                value: humidityValue,
+                unit: "%",
+                type: "physical",
+                descriptionText: "${child.displayName} humidity is ${humidityValue}%"
+            ]
+
+            if (settings?.txtEnable) log.info "${map.descriptionText} (via child device)"
+            child.parse([map])
         } else {
             log.warn "${device.displayName} FP300 child device not found for humidity event"
         }
