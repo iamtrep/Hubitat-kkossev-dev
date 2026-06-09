@@ -61,14 +61,17 @@
  * ver. 2.8.5 2025-11-29 kkossev     - added HOBEIAN ZG-101ZS TS0044 _TZ3000_bgtzm4ny @bkinmuc ; added TS0044 _TZ3000_a4xycprs _TZ3000_dziaict4 _TZ3000_j61x9rxn _TZ3000_kfu8zapd _TZ3000_ygvf9xzp
  * ver. 2.8.6 2025-11-30 kkossev     - bug fix: wierd TS0041 _TZ3000_rsqqkdxv switch event handling was affecting other devices; debug loggs are automatically disabled after 24 hours; DEFAULT_DEBOUNCE = true
  * ver. 2.9.0 2025-12-01 kkossev     - handleNodeDescRequest()
- * ver. 2.9.1 2025-12-22 kkossev     - (dev. branch) added respondToZdoRequests preference; respond to ZDO Node_Desc_request (0x0002) only if the preference is enabled; added TS004F _TZ3000_gwkzibhs @callumgw
+ * ver. 2.9.1 2025-12-22 kkossev     - added respondToZdoRequests preference; respond to ZDO Node_Desc_request (0x0002) only if the preference is enabled; added TS004F _TZ3000_gwkzibhs @callumgw
+ * ver. 2.9.2 2026-03-30 kkossev     - added model TS0215A manufacturer '_TZ3000_0dumfk2', '_TZ3000_ssp0maqm', '_TZ3000_p3fph1go' as a SOS button @callumgw; added TS0041 _TZ3000_8rppvwda @sales8
+ * ver. 2.9.3 2026-04-27 kkossev     - added Third Reality 3RSB01085Z (Smart Scene Button S3, 3 buttons) and 3RSB22BZ (Smart Button) support
+ * ver. 2.9.4 2026-04-28 kkossev     - Sonoff: added ZDO bind for cluster 0x0001 and ZCL configure-reporting for battery percentage and voltage (min=3600s, max=7200s) to fix false 'offline' status; updated SNZB-01P fingerprint deviceJoinName; added 'lastPushed' timestamp attribute (yyyy-MM-dd HH:mm:ss) @John_Land
  *
  * 
  *                                   - TODO: debounce timer configuration (1000ms may be too low when repeaters are in use);
  *                                   - TODO: unschedule jobs from other drivers: https://community.hubitat.com/t/moes-4-button-zigbee-switch/78119/20?u=kkossev
  *                                   - TODO: configre (override) the numberOfButtons in the AdvancedOptions
  *                                   - TODO: Lightify initialization like in the stock HE driver'; add Aqara button;
- *                                   - TODO: Sonoff button - battery reporting to be enabled by default; Refresh to read battery level/voltage';
+ *                                   - TODO: Sonoff button - Refresh to read battery level/voltage';
  *                                   - TODO: add IAS Zone (0x0500) and IAS ACE (0x0501) support; enroll for TS0215/TS0215A
  *                                   - TODO: Remove battery percentage reporting configuration for TS0041 and TS0046 : https://github.com/Koenkk/zigbee2mqtt/issues/6313#issuecomment-780746430 // https://github.com/Koenkk/zigbee2mqtt/issues/15340
  *                                   - TODO: Try to send default responses after button press for TS004F devices : https://github.com/Koenkk/zigbee2mqtt/issues/8149
@@ -77,8 +80,8 @@
  *                                   - TODO: add 'auto revert to scene mode' option
  */
 
-static String version() { '2.9.1' }
-static String timeStamp() { '2025/12/22 10:18 AM' }
+static String version() { '2.9.4' }
+static String timeStamp() { '2026/04/28 8:00 AM' }
 
 @Field static final Boolean DEBUG = false
 @Field static final Integer healthStatusCountTreshold = 4
@@ -103,6 +106,7 @@ metadata {
         attribute 'batteryVoltage', 'number'
         attribute 'healthStatus', 'enum', ['offline', 'online']
         attribute 'powerSource', 'enum', ['battery', 'dc', 'mains', 'unknown']
+        attribute 'lastPushed', 'string'
 
         if (DEBUG == true) {
             command 'switchMode', [[name: 'mode*', type: 'ENUM', constraints: ['dimmer', 'scene'], description: 'Select device mode']]
@@ -131,6 +135,7 @@ metadata {
         fingerprint profileId: '0104', endpointId:'01', inClusters:'0001,0006,E000,0000', outClusters:'0019,000A', model:'TS0041', manufacturer:'_TZ3000_s0i14ubi'    // https://community.hubitat.com/t/release-tuya-scene-switch-ts004f-driver-w-healthstatus/92823/231?u=kkossev https://www.aliexpress.us/item/2255800908957715.html
         fingerprint profileId: '0104', endpointId:'01', inClusters:'0001,0006,E000,0000', outClusters:'0019,000A', model:'TS0041', manufacturer:'_TZ3000_mrpevh8p'    // https://community.hubitat.com/t/release-tuya-scene-switch-ts004f-driver-w-healthstatus/92823/236?u=kkossev
         fingerprint inClusters: '0000,0001,0006', outClusters: '0019,000A', manufacturer: '_TZ3000_rsqqkdxv', model: 'TS0041', deviceJoinName: 'Zigbee Tuya 1 Button' // https://github.com/kkossev/Hubitat/pull/43#issue-3484293750 
+        fingerprint inClusters: '0000,0003,0001,0020,0004', outClusters: '0019,0006,0004', manufacturer: '_TZ3000_8rppvwda', model: 'TS0041', deviceJoinName: 'Zigbee Tuya 1 Button'    // https://community.hubitat.com/t/release-tuya-scene-switch-ts004f-driver-w-healthstatus/92823/313?u=kkossev
 
         fingerprint inClusters: '0000,0001,0003,0004,0006,1000,E001', outClusters: '0019,000A,0003,0004,0006,0008,1000', manufacturer: '_TZ3000_ja5osu5g', model: 'TS004F', deviceJoinName: 'MOES Smart Button (ZT-SY-SR-MS)' // MOES ZigBee IP55 Waterproof Smart Button Scene Switch & Wireless Remote Dimmer (ZT-SY-SR-MS)
         fingerprint inClusters: '0000,0001,0003,0004,0006,1000,E001', outClusters: '0019,000A,0003,0004,0005,0006,0008,1000', manufacturer: '_TZ3000_rco1yzb1', model: 'TS004F', deviceJoinName: 'LIDL Smart Button SSBM A1'
@@ -184,7 +189,7 @@ metadata {
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0004,0005,0006', outClusters: '0003', model: '3AFE170100510001', manufacturer: 'Konke', deviceJoinName: 'Konke button'
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0003,0001', outClusters: '0006,0003', model: 'WB01', manufacturer: 'eWeLink', deviceJoinName: 'Sonoff SNZB-01 button'
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0003,0001', outClusters: '0006,0003', model: 'WB-01', manufacturer: 'eWeLink', deviceJoinName: 'Sonoff SNZB-01 button'
-        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0020,0001,0003,FC57', outClusters: '0003,0006,0019', model: 'SNZB-01P', manufacturer: 'eWeLink', deviceJoinName: 'Sonoff SNZB-01 button'
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0020,0001,0003,FC57', outClusters: '0003,0006,0019', model: 'SNZB-01P', manufacturer: 'eWeLink', deviceJoinName: 'Sonoff SNZB-01P button'
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0009,0020,1000', outClusters:'0003,0004,0006,0008,0019,0102,1000', model:'TRADFRI SHORTCUT Button', manufacturer:'IKEA of Sweden', deviceJoinName: 'IKEA Tradfri Shortcut Button E1812'
         // OSRAM Lightify - use HE inbuilt driver to pair first !
         //fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0001,0020,1000,FD00", outClusters:"0003,0004,0005,0006,0008,0019,0300,1000", model:"Lightify Switch Mini", manufacturer:"OSRAM", deviceJoinName: "Lightify Switch Mini"
@@ -207,6 +212,9 @@ metadata {
         fingerprint profileId:'0104', endpointId:'01', inClusters:'0000,0001,0500,0501', outClusters: '0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_tj4pwzzm', deviceJoinName: 'Tuya SOS button'
         fingerprint profileId:'0104', endpointId:'01', inClusters:'0001,0003,0500,0000', outClusters: '0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_2izubafb', deviceJoinName: 'Tuya SOS button'    // @abraham
         fingerprint profileId:'0104', endpointId:'01', inClusters:'0001,0003,0500,0000', outClusters: '0501,0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_pkfazisv', deviceJoinName: 'iAlarm (Meian) SOS button'    // https://community.hubitat.com/t/request-adding-fingerprints-for-ialarm-devices/118166/2?u=kkossev
+        fingerprint profileId:'0104', endpointId:'01', inClusters:'0000,0001,0500,0501', outClusters: '0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_0dumfk2z', deviceJoinName: 'Tuya SOS button'    // 1 button    // https://community.hubitat.com/t/release-tuya-scene-switch-ts004f-driver-w-healthstatus/92823/321?u=kkossev
+        fingerprint profileId:'0104', endpointId:'01', inClusters:'0000,0001,0500,0501', outClusters: '0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_ssp0maqm', deviceJoinName: 'Tuya SOS button'    // 1 button
+        fingerprint profileId:'0104', endpointId:'01', inClusters:'0000,0001,0500,0501', outClusters: '0019,000A', model: 'TS0215A', manufacturer: '_TZ3000_p3fph1go', deviceJoinName: 'Tuya SOS button'    // 1 button
 
         fingerprint profileId:'0104', endpointId:'01', inClusters:'0001,0500,EF00,0000', outClusters: '0019,000A', model: 'TS0021', manufacturer: '_TZ3210_3ulg9kpo', deviceJoinName: 'Tuya 2 button'    // https://community.hubitat.com/t/request-adding-fingerprints-for-ialarm-devices/118166/2?u=kkossev
 
@@ -220,6 +228,10 @@ metadata {
 		fingerprint inClusters: "0000,0003,0006,0019", outClusters: "0003,0004,0019", manufacturer: "ShinaSystem", model: "SBM300Z5", deviceJoinName: "SiHAS Switch 5"
 		fingerprint inClusters: "0000,0003,0006,0019", outClusters: "0003,0004,0019", manufacturer: "ShinaSystem", model: "SBM300Z6", deviceJoinName: "SiHAS Switch 6"
 		fingerprint inClusters: "0000,0003,0006,0019", outClusters: "0003,0004,0019", manufacturer: "ShinaSystem", model: "ISM300Z3", deviceJoinName: "SiHAS Switch 3"        
+
+        // Third Reality buttons
+        fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0001,0012,0004", outClusters:"0019,0005", model:"3RSB01085Z", manufacturer:"Third Reality, Inc", controllerType: "ZGB", deviceJoinName: 'Third Reality Smart Scene Button S3'
+        fingerprint profileId:'0104', endpointId:'01', inClusters:'0000,0001,0012,FF01', outClusters:'0019', model:'3RSB22BZ', manufacturer:'Third Reality, Inc', deviceJoinName: 'Third Reality Smart Button'    // not tested
     }
     preferences {
         input(name: 'logEnable', type: 'bool', title: '<b>Enable debug logging</b>', defaultValue: DEFAULT_LOG_ENABLE)
@@ -265,11 +277,12 @@ boolean isIkea() { device.getDataValue('manufacturer') == 'IKEA of Sweden' }
 boolean isOsram() { device.getDataValue('manufacturer') == 'OSRAM' }
 boolean needsDebouncing() { (settings?.forcedDebounce == true) || (device.getDataValue('model') == 'TS004F' || (device.getDataValue('manufacturer') in ['_TZ3000_abci1hiu', '_TZ3000_vp6clf9d', '_TZ3000_ur5fpg7p', '_TZ3000_wkai4ga5']) || (device.getDataValue('model') == 'TS0043' && device.getDataValue('manufacturer') in ['TZ3000_gbm10jnj'])) }
 boolean needsMagic() { device.getDataValue('model') in ['TS004F', 'TS0044', 'TS0043', 'TS0042', 'TS0041', 'TS0046'] }
-boolean isSOSbutton() { device.getDataValue('manufacturer') in ['_TZ3000_4fsgukof', '_TZ3000_wr2ucaj9', '_TZ3000_zsh6uat3', '_TZ3000_tj4pwzzm', '_TZ3000_2izubafb', '_TZ3000_pkfazisv', '_TZE200_nojsjtj2', 'MultIR' ] }
+boolean isSOSbutton() { device.getDataValue('manufacturer') in ['_TZ3000_4fsgukof', '_TZ3000_wr2ucaj9', '_TZ3000_zsh6uat3', '_TZ3000_tj4pwzzm', '_TZ3000_2izubafb', '_TZ3000_pkfazisv', '_TZE200_nojsjtj2', 'MultIR', '_TZ3000_0dumfk2z', '_TZ3000_ssp0maqm', '_TZ3000_p3fph1go' ] }
 boolean isUSBpowered() { device.getDataValue('manufacturer') in ['_TZ3000_b3mgfu0d', '_TZ3000_czuyt8lz'] }
 boolean isSiHAS() { device.getDataValue('manufacturer') == 'ShinaSystem' }
 boolean hasBatteryConfigurationBug()  { device.getDataValue('manufacturer') in ['_TZ3000_a4xycprs', '_TZ3000_dziaict4', '_TZ3000_j61x9rxn', '_TZ3000_mh9px7cq', '_TZ3000_5tqxpine', '_TZ3000_u3nv1jwk', '_TZ3000_bgtzm4ny', '_TZ3000_kfu8zapd', '_TZ3000_ee8nrt2l', '_TZ3000_ygvf9xzp' /* for testing, '_TZ3000_vp6clf9d'*/] }
 boolean isWierdTS0041() { device.getDataValue('model') == 'TS0041' && device.getDataValue('manufacturer') in ['_TZ3000_rsqqkdxv'] }
+boolean isThirdReality() { device.getDataValue('manufacturer') == 'Third Reality, Inc' }
 
 
 // Parse incoming device messages to generate events
@@ -358,7 +371,7 @@ void parse(String description) {
             }
         } // command == "FD"
         else if (isSonoff() && (descMap.clusterInt == 0x0006 && (descMap.command in ['00', '01', '02' ]))) {
-            // Sonoff SNZB-01
+            // Sonoff SNZB-01 / SNZB-01P
             buttonNumber = 1
             buttonState = descMap.command == '02' ? 'pushed' : descMap.command == '01' ? 'doubleTapped' : descMap.command == '00' ? 'held' : 'unknown'
         }
@@ -523,6 +536,7 @@ void parse(String description) {
             String descriptionText = "button $buttonNumber was $buttonState"
             event = [name: buttonState, value: buttonNumber.toString(), data: [buttonNumber: buttonNumber], descriptionText: descriptionText, isStateChange: true, type: 'physical']
             if (txtEnable) { log.info "${device.displayName } $descriptionText" }
+            updateLastPushed(buttonNumber, buttonState)
         }
 
         if (event) {
@@ -556,6 +570,31 @@ void parse(String description) {
         else if (descMap?.cluster == '0000' && descMap?.command in ['01']) { // Basic Cluster responses
             if (logEnable) { log.debug "${device.displayName} skipping Basic cluster ${descMap?.cluster} response" }
             return
+        }
+        else if (isThirdReality() && descMap?.cluster == '0012' && descMap?.attrId == '0055') {
+            buttonNumber = descMap.sourceEndpoint != null ? zigbee.convertHexToInt(descMap.sourceEndpoint) : 0
+            if (buttonNumber == 0) {
+                if (logEnable) { log.warn "${device.displayName} Third Reality: could not determine button number from sourceEndpoint ${descMap.sourceEndpoint}" }
+                return
+            }
+            def presentValue = descMap.value != null ? zigbee.convertHexToInt(descMap.value) : -1
+            buttonState = 'unknown'
+            switch (presentValue) {
+                case 1:   buttonState = 'pushed' ; break
+                case 2:   buttonState = 'doubleTapped' ; break
+                case 0:   buttonState = 'held' ; break
+                case 255: buttonState = 'released' ; break
+                case 3:
+                case 4:
+                    if (logEnable) { log.warn "${device.displayName} Third Reality: presentValue ${presentValue} (triple/quadruple) not supported, ignoring" }
+                    return
+                default:
+                    if (logEnable) { log.warn "${device.displayName} Third Reality: unknown presentValue ${presentValue}, ignoring" }
+                    return
+            }
+            if (txtEnable) { log.info "${device.displayName} button ${buttonNumber} ${buttonState}" }
+            result = [name: buttonState, value: buttonNumber, isStateChange: true, type: 'physical', descriptionText: "${device.displayName} button ${buttonNumber} was ${buttonState}"]
+            updateLastPushed(buttonNumber, buttonState)
         }
         else {
             if (logEnable) { log.debug "${device.displayName } did not parse descMap: $descMap" }
@@ -713,8 +752,16 @@ void initialize() {
         tuyaMagic()
     }
     else if (isSonoff()) {
-        sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} ${device.endpointId} 0x01 0x0006 {${device.zigbeeId}} {}", 'delay 50', ])
-        sendZigbeeCommands(["he rattr 0x${device.deviceNetworkId} 0x${device.endpointId} 0x0001 0x0021 {}", 'delay 200', ])
+        List<String> cmd = []
+        cmd += ["zdo bind ${device.deviceNetworkId} ${device.endpointId} 0x01 0x0006 {${device.zigbeeId}} {}", 'delay 50']
+        cmd += ["zdo bind ${device.deviceNetworkId} ${device.endpointId} 0x01 0x0001 {${device.zigbeeId}} {}", 'delay 50']
+        // Configure battery reporting with min=3600s max=7200s (matches Z2M): max=7200 acts as a keep-alive heartbeat every 2 hours,
+        // preventing the health-check counter from incrementing and avoiding false 'offline' status for battery-powered buttons.
+        cmd += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 3600, 7200, 0x01, [:], delay = 150)   // Battery Percentage Remaining
+        cmd += zigbee.configureReporting(0x0001, 0x0020, DataType.UINT8, 3600, 7200, 0x01, [:], delay = 150)   // Battery Voltage
+        cmd += ["he rattr 0x${device.deviceNetworkId} 0x${device.endpointId} 0x0001 0x0021 {}", 'delay 200']  // immediate battery read
+        logInfo 'sending Sonoff configuration commands... Make sure the device is awake before clicking Configure!'
+        sendZigbeeCommands(cmd)
     }
     else if (isOsram()) {
         sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x01 0x01 0x0006 {${device.zigbeeId}} {}", 'delay 50', ])
@@ -726,8 +773,11 @@ void initialize() {
         sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x03 0x01 0x0006 {${device.zigbeeId}} {}", 'delay 50', ])
         sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x03 0x01 0x0008 {${device.zigbeeId}} {}", 'delay 50', ])
         sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x03 0x01 0x0300 {${device.zigbeeId}} {}", 'delay 50', ])
-    //sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x04 0x01 0x0006 {${device.zigbeeId}} {}", "delay 50", ])
-    //sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x04 0x01 0x0008 {${device.zigbeeId}} {}", "delay 50", ])
+    }
+    else if (isThirdReality()) {
+        sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x01 0x01 0x0012 {${device.zigbeeId}} {}", 'delay 50'])
+        sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x02 0x01 0x0012 {${device.zigbeeId}} {}", 'delay 50'])
+        sendZigbeeCommands(["zdo bind ${device.deviceNetworkId} 0x03 0x01 0x0012 {${device.zigbeeId}} {}", 'delay 50'])
     }
     else {
         if (logEnable) { log.debug "${device.displayName} skipped TuyaMagic() for non-Tuya device ${device.getDataValue('model')} ..." }
@@ -785,7 +835,11 @@ void initialize() {
     }
     else if (device.getDataValue('model') in ['SBM300Z4']) {
         supportedValues = ['pushed']
-    }    
+    }
+    else if (isThirdReality()) {
+        numberOfButtons = device.getDataValue('model') == '3RSB01085Z' ? 3 : 1
+        supportedValues = ['pushed', 'doubleTapped', 'held', 'released']
+    }
     else {
         numberOfButtons = 4    // unknown
         supportedValues = ['pushed', 'double', 'held', 'released']
@@ -836,9 +890,15 @@ void switchToDimmerMode() {
     sendZigbeeCommands(zigbee.writeAttribute(0x0006, 0x8004, 0x30, 0x00))
 }
 
+private void updateLastPushed(buttonNumber, final String buttonState) {
+    String ts = new Date().format('yyyy-MM-dd HH:mm:ss')
+    sendEvent(name: 'lastPushed', value: ts, descriptionText: "button $buttonNumber was $buttonState at $ts", isStateChange: true)
+}
+
 void buttonEvent(buttonNumber, final String buttonState, final boolean isDigital=false) {
     Map event = [name: buttonState, value: buttonNumber.toString(), data: [buttonNumber: buttonNumber], descriptionText: "button $buttonNumber was $buttonState", isStateChange: true, type: isDigital == true ? 'digital' : 'physical']
     if (txtEnable) { log.info "${device.displayName} $event.descriptionText" }
+    updateLastPushed(buttonNumber, buttonState)
     sendEvent(event)
 }
 

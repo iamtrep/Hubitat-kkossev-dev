@@ -59,14 +59,13 @@
  *                                  MAJOR CHANGE: INTELLIGENT PARAMETER CHANGE DETECTION - Implemented for FP300 and illuminance reporting - Stores parameters in state.params [n:name, t:type, v:value, l:local] and only sends changed values to prevent device instability
  * ver. 2.0.1 2025-11-20 kkossev  - forced sending temperature updates to the child device; improved trackTargetDistance() and startSpatialLearning() commands description; added _info_ messages for better user experience; pirDetection changed to active/inactive
  *                                  roomActivity attribute filtered for FP1/FP1E only; updates battery attribute for the FP300 child device
- * ver. 2.1.0 2025-11-23 kkossev  - (dev.branch) added FP300 advanced sampling configuration parameters (temp/humidity and light sampling frequency/period) with intelligent change detection; added sampling parameters to refresh() command;
+ * ver. 2.1.0 2025-11-23 kkossev  - added FP300 advanced sampling configuration parameters (temp/humidity and light sampling frequency/period) with intelligent change detection; added sampling parameters to refresh() command;
  *                                  added FP300 detection range zones configuration (0.25m resolution bitmap, attribute 0x019A) with validation and attribute event;
  *                                  added FP300 LED disabled at night and LED night time schedule parameters with full read/write support
+ * ver. 2.1.1 2025-12-30 kkossev  - fixed rounding issue for temperature attribute
+ * ver. 2.1.2 2026-03-30 kkossev  - commented out the Aqara FP300 fingerprint to prevent interference with the Dedicated Aqara FP300 Presence Multi-Sensor Zigbee Driver.
  * 
  *
- *                                 TODO: 
- *                                 TODO: 
- *                                 TODO: 
  *                                 TODO: received LUMI LEAVE report: (cluster=0xFCC0 attrId=0x00FC value=0x00) : set the device offline and INFO message/event
  *                                 TODO: resetPresence() : _info_messages and timeout check 
  *                                 TODO: scheduleCommandTimeoutCheck() - implementation for FP300 commands
@@ -74,8 +73,8 @@
  *
  */
 
-static String version() { "2.1.0" }
-static String timeStamp() {"2025/11/23 4:27 PM"}
+static String version() { "2.1.2" }
+static String timeStamp() {"2026/03/30 8:30 PM"}
 
 import hubitat.device.HubAction
 import hubitat.device.Protocol
@@ -186,7 +185,8 @@ metadata {
         fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0400,0003,0001", outClusters:"0003", model:"lumi.sen_ill.mgl01", manufacturer: "XIAOMI", deviceJoinName: "Mi Light Detection Sensor GZCGQ01LM" 
         fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0400,0003,0001", outClusters:"0003", model:"lumi.sen_ill.agl01", manufacturer:"LUMI",   deviceJoinName:  aqaraModels['GZCGQ11LM'].deviceJoinName                       // tests only : "Aqara T1 light intensity sensor GZCGQ11LM"    
         fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0003,FCC0", outClusters:"0003,0019", model:"lumi.sensor_occupy.agl1", manufacturer:"aqara", controllerType: "ZGB", deviceJoinName: "Aqara FP1E Human Presence Detector RTCZCGQ13LM"        // RTCZCGQ13LM ( FP1E )
-        fingerprint profileId:"0104", endpointId:"01", inClusters:"0012,0400,0405,0402,0001,0003,0000,FCC0", outClusters:"000A,0019", model:"lumi.sensor_occupy.agl8", manufacturer:"Aqara", controllerType: "ZGB", deviceJoinName: "Aqara FP300 Presence Sensor PS-S04D"  // PS-S04D ( FP300 ) Hubitat fingerprint
+        // for Aqara PS-S04D (FP300), use the Dedicated Aqara FP300 Presence Multi-Sensor Zigbee Driver : https://community.hubitat.com/t/release-dedicated-aqara-fp300-presence-multi-sensor-zigbee-driver/162353 
+        //fingerprint profileId:"0104", endpointId:"01", inClusters:"0012,0400,0405,0402,0001,0003,0000,FCC0", outClusters:"000A,0019", model:"lumi.sensor_occupy.agl8", manufacturer:"Aqara", controllerType: "ZGB", deviceJoinName: "Aqara FP300 Presence Sensor PS-S04D"  // PS-S04D ( FP300 ) Hubitat fingerprint
     }
 
     preferences {
@@ -1666,23 +1666,23 @@ def temperatureEvent( temperature ) {
     if (isFP300()) {
         def child = getChildTempHumidityDevice()
         if (child) {
-            def map = [
-                name: "temperature",
-                unit: "\u00B0C",
-                type: "physical"
-            ]
-                
+            def map = [:] 
+            map.name = "temperature"
+            map.unit = "\u00B0"+"C"
+            def tempOffset = settings?.tempOffset ?: 0
+            
             if ( location.temperatureScale == "F") {
                 temperature = (temperature * 1.8) + 32
                 map.unit = "\u00B0"+"F"
             }
-
-            def tempConverted = temperature + settings?.tempOffset ?: 0
+            
+            def tempConverted = temperature + tempOffset
             map.value = new BigDecimal(tempConverted).setScale(1, BigDecimal.ROUND_HALF_UP)  // Round to 1 decimal place
-            map.descriptionText = "${child.displayName} temperature is ${map.value} ${map.unit}"
-
-            if (settings?.txtEnable) {log.info "${map.descriptionText} (via child device)"}
-            child.parse([map])
+            map.type = "physical"
+            map.isStateChange = true
+            
+            if (settings?.txtEnable) {log.info "${device.displayName} temperature is ${map.value} ${map.unit} (via child device)"}
+            child.parse([[name: map.name, value: map.value, unit: map.unit, type: map.type, descriptionText: "${child.displayName} temperature is ${map.value} ${map.unit}", isStateChange: map.isStateChange]])
         } else {
             log.warn "${device.displayName} FP300 child device not found for temperature event"
         }
@@ -1768,22 +1768,15 @@ def humidityEvent( humidity ) {
         if (child) {
             // Apply humidity offset
             def humidityOffset = settings?.humidityOffset ?: 0
-
+            def humidityAdjusted = humidity + humidityOffset
+            
             // Ensure humidity is within valid range (0-100%)
-            def humidityValue = Math.round(humidity + humidityOffset as Double)
-            humidityValue = Math.max(0, humidityValue)
-            humidityValue = Math.min(100, humidityValue)
-
-            def map = [
-                name: "humidity",
-                value: humidityValue,
-                unit: "%",
-                type: "physical",
-                descriptionText: "${child.displayName} humidity is ${humidityValue}%"
-            ]
-
-            if (settings?.txtEnable) log.info "${map.descriptionText} (via child device)"
-            child.parse([map])
+            def humidityValue = Math.round(humidityAdjusted as Double)
+            if (humidityValue < 0) humidityValue = 0
+            if (humidityValue > 100) humidityValue = 100
+            def isStateChange = true
+            if (settings?.txtEnable) log.info "${device.displayName} humidity is ${humidityValue}% (via child device)"
+            child.parse([[name: "humidity", value: humidityValue, unit: "%", type: "physical", descriptionText: "${child.displayName} humidity is ${humidityValue}%", isStateChange: isStateChange]])
         } else {
             log.warn "${device.displayName} FP300 child device not found for humidity event"
         }

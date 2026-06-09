@@ -29,7 +29,8 @@
  * ver. 1.2.5  2024-08-20 kkossev  - pollContactStatus only when the current message is not IAS !
  * ver. 1.2.6  2024-10-02 kkossev  - added SNZB-04P; added capability 'TamperAlert'; pollContactStatus bug fix;
  * ver. 1.2.7  2025-02-03 kkossev  - Xfinity/Visonic MCT-350 Zigbee Contact Sensor fingerprint typo fix - tnx @thanhvle-94
- * ver. 1.2.8  2025-10-20 kkossev  - (dev. branch) added IMOU Door and Window Sensor ZD1 ( MultIR ZD2-EN )
+ * ver. 1.2.8  2025-10-20 kkossev  - added IMOU Door and Window Sensor ZD1 ( MultIR ZD2-EN )
+ * ver. 1.3.0  2026-05-12 kkossev  - added TS0601 _TZE200_seq9cm6u/_TZE204_seq9cm6u pressure strip as contact sensor;
  *
  *                                   TODO: handle the case when 'lastBattery' is missing.
  *                                   TODO: filter duplicated open/close messages when 'Poll Contact Status' option is enabled
@@ -41,8 +42,8 @@
  *                                   TODO: refactor - use libraries !
  */
 
-static String version() { '1.2.8' }
-static String timeStamp() { '2025/10/20 9:25 PM' }
+static String version() { '1.3.0' }
+static String timeStamp() { '2026/05/12 12:45 AM' }
 
 import groovy.json.*
 import groovy.transform.Field
@@ -73,7 +74,7 @@ metadata {
                     [name: 'dpValue', type: 'STRING', description: 'Tuya DP value', constraints: ['STRING']],
                     [name: 'dpType', type: 'ENUM', constraints: ['DP_TYPE_VALUE', 'DP_TYPE_BOOL', 'DP_TYPE_ENUM'], description: 'DP data type']
             ]
-            command 'test', [[name: 'test', type: 'STRING', description: 'test', constraints: ['STRING']]]
+            command 'testParse', [[name: 'test', type: 'STRING', description: 'test', constraints: ['STRING']]]
         }
         command 'setClosed', [[name: 'Set contact state to closed (for tests)']]
         command 'setOpen', [[name: 'Set contact state to open (for tests)']]
@@ -84,6 +85,8 @@ metadata {
         attribute 'healthStatus', 'enum', ['offline', 'online', 'unknown']
         attribute 'batteryVoltage', 'number'
         attribute 'lastBattery', 'date'         // last battery event time - added in 1.2.0 05/22/2024
+        attribute 'workState', 'enum', ['presence', 'none', 'presence_5min', 'presence_30min', 'none_5min', 'none_30min']
+        attribute 'rawPressure', 'number'
 
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0004,0005,EF00', outClusters: '0019,000A', model: 'TS0601', manufacturer: '_TZE200_nvups4nh', deviceJoinName: 'Tuya Contact and T/H Sensor'
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0001,0500,0000', outClusters: '0019,000A', model: 'TS0601', manufacturer: '_TZE200_pay2byax', deviceJoinName: 'Tuya Contact and Illuminance Sensor'
@@ -111,12 +114,24 @@ metadata {
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0500,FFF1', outClusters:'0019', model:'3RDTS01056Z', manufacturer:'Third Reality, Inc', controllerType: 'ZGB', deviceJoinName: 'Third Reality Tilt Sensor'         
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0020,0402,0500,0B05', outClusters: '0019', model: 'URC4460BC0-X-R', manufacturer: 'Universal Electronics Inc', deviceJoinName: 'Xfinity/Visonic MCT-350 Zigbee Contact Sensor'   
         fingerprint profileId:"0104", endpointId:"01", inClusters:"0000,0001,0003,0500,0B05", outClusters:"0003", model:"ZD2-EN", manufacturer:"MultIR", controllerType: "ZGB", deviceJoinName: 'IMOU Door and Window Sensor ZD1'                   // +tamper
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0004,0005,EF00', outClusters: '0019,000A', model: 'TS0601', manufacturer: '_TZE200_seq9cm6u', deviceJoinName: 'Tuya Zigbee Pressure/Contact Sensor'
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0004,0005,EF00', outClusters: '0019,000A', model: 'TS0601', manufacturer: '_TZE204_seq9cm6u', deviceJoinName: 'Tuya Zigbee Pressure/Contact Sensor'
     }
     preferences {
         input(name: 'txtEnable', type: 'bool', title: '<b>Description text logging</b>', description: 'Display measured values in HE log page. Recommended value is <b>true</b>', defaultValue: true)
         input(name: 'logEnable', type: 'bool', title: '<b>Debug logging</b>', description: 'Debug information, useful for troubleshooting. Recommended value is <b>false</b>', defaultValue: true)
         if (isConfigurable()) {
             input(title: 'To configure a sleepy device, try any of the methods below :', description: '<b>* Change open/closed state<br> * Remove the battery for at least 1 minute<br> * Pair the device again to HE</b>', type: 'paragraph', element: 'paragraph')
+        }
+        if (device) {
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                input name: 'pressureSensitivity', type: 'enum', title: '<b>Pressure Sensitivity</b>', options: pressureSensitivityOptions.options, defaultValue: pressureSensitivityOptions.defaultValue, description: 'Pressure detection sensitivity threshold'
+                input name: 'noPressureDelay', type: 'number', title: '<b>No-Pressure Delay</b>', description: 'Delay before reporting open (no pressure), seconds', defaultValue: 10, range: '0..3600'
+                input name: 'pressureDelay', type: 'number', title: '<b>Pressure Delay</b>', description: 'Delay before reporting closed (pressure detected), seconds', defaultValue: 10, range: '0..3600'
+                input name: 'pressureReportingInterval', type: 'number', title: '<b>Pressure Reporting Interval</b>', description: 'How often the device reports raw pressure, seconds', defaultValue: 60, range: '0..3600'
+                input name: 'sendRawPressure', type: 'bool', title: '<b>Send Raw Pressure Events</b>', description: 'Enable rawPressure attribute events', defaultValue: true
+                input name: 'pressureThreshold', type: 'number', title: '<b>Raw Pressure Threshold</b>', description: 'Minimum change in raw pressure value to trigger an event', defaultValue: 1, range: '0..9999'
+            }
         }
         input(name: 'advancedOptions', type: 'bool', title: '<b>Advanced options</b>', defaultValue: false)
         if (advancedOptions == true) {
@@ -141,6 +156,11 @@ metadata {
 @Field static final Map batteryReportingOptions = [
     defaultValue: 00,
     options     : [00: 'Default (no explicit battery configuration)', 600:'Every 10 minutes (not recommended!)', 3600: 'Every 1 hour', 7200: 'Every 2 Hours', 14400: 'Every 4 Hours', 28800: 'Every 8 Hours', 43200: 'Every 12 Hours', 86400: 'Every 24 Hours']
+]
+
+@Field static final Map pressureSensitivityOptions = [
+    defaultValue: 'middle',
+    options     : ['low': 'Low', 'middle': 'Middle (default)', 'high': 'High']
 ]
 
 @Field static final Map deviceProfiles = [
@@ -271,6 +291,19 @@ metadata {
         batteries     : 'CR2032'
     ],
 
+    'TS0601_PRESSURE_CONTACT_BATT' : [                                        // https://github.com/wzwenzhi/Wenzhi-ZigBee2mqtt/blob/ef5cfd24/M3M7-260122(1).js
+        model         : 'TS0601',
+        manufacturers : ['_TZE200_seq9cm6u', '_TZE204_seq9cm6u'],
+        deviceJoinName: 'Tuya Zigbee Pressure/Contact Sensor',
+        inClusters    : '0000,0004,0005,EF00',
+        outClusters   : '0019,000A',
+        capabilities  : ['contactSensor': true, 'battery': true],
+        configuration : ['battery': false, 'sleepyDevice': true],              // battery via EF00 DP4 only; cluster 0x0001 returns 0x86 (unsupported)
+        attributes    : ['healthStatus'],
+        preferences   : ['pressureSensitivity': true, 'noPressureDelay': true, 'pressureDelay': true, 'pressureReportingInterval': true],
+        batteries     : 'CR2032'
+    ],
+
     'UNKNOWN'             : [
         model         : '',
         manufacturers : [],
@@ -280,13 +313,14 @@ metadata {
         batteries     : 'unknown'
     ]
 ]
-
-String getModelGroup()          { return (state.deviceProfile as String) ?: 'UNKNOWN' }
+//String getModelGroup()          { return (state.deviceProfile as String) ?: 'UNKNOWN' }
+String getModelGroup()          { return 'TS0601_PRESSURE_CONTACT_BATT' }   // for tests
 boolean isConfigurable(String model)   { return (deviceProfiles["$model"]?.preferences != null && deviceProfiles["$model"]?.preferences != []) }
 boolean isConfigurable()        { String model = getModelGroup(); return isConfigurable(model) }
 boolean isBatteryConfigurable() { deviceProfiles[getModelGroup()]?.configuration?.battery?.value == true }
 boolean hasIlliminance()        { deviceProfiles[getModelGroup()]?.capabilities?.IlluminanceMeasurement?.value == true }
 boolean hasTamper()             { deviceProfiles[getModelGroup()]?.capabilities?.tamperAlert?.value == true }
+boolean isSleepyDevice()        { deviceProfiles[getModelGroup()]?.configuration?.sleepyDevice == true }
 
 @Field static final Integer MaxRetries = 3
 @Field static final Integer ConfigTimer = 15
@@ -424,6 +458,10 @@ def parse(String description) {
             logInfo 'device announcement'
             statsMap['rejoins'] = (statsMap['rejoins'] ?: 0) + 1
             state.stats = mapToJsonString(statsMap)
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                setPendingCmds(sendPressureSensorConfigCmds())
+                sendAndClearPendingCmds('rejoin')
+            }
         }
         else if (descMap.isClusterSpecific == false && descMap.command == '01') {
             //global commands read attribute response
@@ -452,6 +490,13 @@ def parse(String description) {
     //
     if (isPendingConfig()) {
         ConfigurationStateMachine()
+    }
+    if (isSleepyDevice() && hasPendingCmds()) {
+        Map lastTxMap = stringToJsonMap(state.lastTx)
+        long lastSent = (lastTxMap.pendingCmdsSentAt ?: 0L) as long
+        if ((now() - lastSent) > 30000) {    // 30s flood guard: don't re-send while waiting for echo
+            sendAndClearPendingCmds('wake')
+        }
     }
     if (settings?.pollContactStatus == true && descMap?.cluster != null && descMap?.cluster != '0500') {          // added 10/19/2023, modified 08/20/2024 (poll only when the current message is not IAS !)
         Map lastTxMap = stringToJsonMap(state.lastTx)
@@ -636,7 +681,7 @@ def processTuyaCluster(descMap) {
             if (settings?.logEnable) { log.warn "${device.displayName} ATTENTION! manufacturer = ${device.getDataValue('manufacturer')} group = ${getModelGroup()} unsupported Tuya cluster ZCL command 0x${clusterCmd} response 0x${status} data = ${descMap?.data} !!!" }
         }
     }
-    else if ((descMap?.clusterInt == CLUSTER_TUYA) && (descMap?.command == '01' || descMap?.command == '02')) {
+    else if ((descMap?.clusterInt == CLUSTER_TUYA) && (descMap?.command == '01' || descMap?.command == '02' || descMap?.command == '05' || descMap?.command == '06')) {
         def dataLen = descMap?.data.size()
         def transid = zigbee.convertHexToInt(descMap?.data[1])                 // "transid" is just a "counter", a response will have the same transid as the command
         for (int i = 0; i < (dataLen - 4);) {
@@ -648,7 +693,7 @@ def processTuyaCluster(descMap) {
             processTuyaDP(descMap, dp, dp_id, fncmd)
             i = i + fncmd_len + 4;
         }
-    } // if (descMap?.command == "01" || descMap?.command == "02")
+    }
 }
 
 def processTuyaDP(descMap, dp, dp_id, fncmd) {
@@ -658,6 +703,10 @@ def processTuyaDP(descMap, dp, dp_id, fncmd) {
             sendContactEvent(contactActive = fncmd)
             break
         case 0x02: // 'TS0601_Contact' battery %
+            logDebug "(dp=$dp) battery event fncmd = ${fncmd}"
+            sendBatteryPercentageEvent(fncmd * 2)
+            break
+        case 0x04: // battery % for _TZE200_seq9cm6u / _TZE204_seq9cm6u pressure sensor (raw 0-100)
             logDebug "(dp=$dp) battery event fncmd = ${fncmd}"
             sendBatteryPercentageEvent(fncmd * 2)
             break
@@ -672,27 +721,69 @@ def processTuyaDP(descMap, dp, dp_id, fncmd) {
             logDebug "(dp=$dp) humidity event fncmd = ${fncmd}"
             humidityEvent(fncmd)
             break
-        case 0x0C : // (12)
-            if (settings?.disableIlluminance != true) {
+        case 0x09: // sensitivity setting (_TZE200_seq9cm6u / _TZE204_seq9cm6u) - config value echoed back by device
+            String sensitivityStr = ['low', 'middle', 'high'].getAt(fncmd) ?: "unknown(${fncmd})"
+            logDebug "(dp=$dp) sensitivity config echo = ${sensitivityStr} (${fncmd})"
+            break
+        case 0x0C : // (12) - raw pressure for TS0601_PRESSURE_CONTACT_BATT; illuminance for others
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                rawPressureEvent(fncmd)
+            } else if (settings?.disableIlluminance != true) {
                 logDebug "(dp=$dp) illuminance event fncmd = ${fncmd}"
-                illuminanceEventLux( fncmd )
-            }
-            else {
+                illuminanceEventLux(fncmd)
+            } else {
                 if (settings?.logEnable) { log.debug "${device.displayName} illuminance reporting is disabled (raw={$fncmd})" }
             }
             break
-        case 0x65 :    // (101)
-            if (settings?.disableIlluminance != true) {
+        case 0x65 :    // (101) - pressureReportingInterval config echo for TS0601_PRESSURE_CONTACT_BATT; illuminance Lux for others
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                int expected101 = safeToInt(settings?.pressureReportingInterval, 60)
+                if (fncmd == expected101) {
+                    logDebug "(dp=$dp) pressureReportingInterval config echo = ${fncmd}s (matches setting)"
+                } else {
+                    log.warn "${device.displayName} pressureReportingInterval echo mismatch: got ${fncmd}s, expected ${expected101}s"
+                }
+            } else if (settings?.disableIlluminance != true) {
                 logDebug "(dp=$dp) illuminance event fncmd = ${fncmd}"
-                illuminanceEventLux(fncmd) // illuminance for TS0601 ContactSensor with illuminance sensor - made optional 06/14/2024 
-            }
-            else {
+                illuminanceEventLux(fncmd) // illuminance for TS0601 ContactSensor with illuminance sensor - made optional 06/14/2024
+            } else {
                 if (settings?.logEnable) { log.debug "${device.displayName} illuminance reporting is disabled (raw={$fncmd})" }
             }
             break
-        case 0x66 :     // (102)
-            logDebug "(dp=$dp) battery event fncmd = ${fncmd}"
-            handleTuyaBatteryLevel( fncmd )
+        case 0x66 :     // (102) - battery level for most TS0601; 'no_pressure_delay' config echo for TS0601_PRESSURE_CONTACT_BATT
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                int expected66 = safeToInt(settings?.noPressureDelay, 10)
+                if (fncmd == expected66) {
+                    logDebug "(dp=$dp) no_pressure_delay config echo = ${fncmd}s (matches setting)"
+                } else {
+                    log.warn "${device.displayName} no_pressure_delay echo mismatch: got ${fncmd}s, expected ${expected66}s"
+                }
+            } else {
+                logDebug "(dp=$dp) battery event fncmd = ${fncmd}"
+                handleTuyaBatteryLevel(fncmd)
+            }
+            break
+        case 0x67 :     // (103) pressure_delay setting echo (_TZE200_seq9cm6u / _TZE204_seq9cm6u)
+            if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+                int expected67 = safeToInt(settings?.pressureDelay, 10)
+                if (fncmd == expected67) {
+                    logDebug "(dp=$dp) pressure_delay config echo = ${fncmd}s (matches setting)"
+                    updateInfo('configured')
+                    logInfo 'Pressure sensor configuration confirmed by device'
+                } else {
+                    log.warn "${device.displayName} pressure_delay echo mismatch: got ${fncmd}s, expected ${expected67}s — wake up the device to re-apply!"
+                }
+            }
+            break
+        case 0x68 :     // (104) work_state (_TZE200_seq9cm6u / _TZE204_seq9cm6u) - internal device state machine
+            final List<String> workStateMap = ['presence', 'none', 'presence_5min', 'presence_30min', 'none_5min', 'none_30min']
+            String workStateStr = fncmd < workStateMap.size() ? workStateMap[fncmd] : "unknown(${fncmd})"
+            if (workStateStr != device.currentValue('workState')) {
+                sendEvent(name: 'workState', value: workStateStr, descriptionText: "${device.displayName} work state is ${workStateStr}", type: 'physical')
+                logInfo "work_state changed to ${workStateStr} (${fncmd})"
+            } else {
+                logDebug "(dp=$dp) work_state = ${workStateStr} (${fncmd}) (unchanged)"
+            }
             break
         default:
             if (settings?.logEnable) { log.warn "${device.displayName} <b>NOT PROCESSED</b> Tuya cmd: dp=${dp} value=${fncmd} descMap.data = ${descMap?.data}" }
@@ -744,30 +835,35 @@ void setClosed() {
 }
 
 void sendContactEvent(contactActive, isDigital = false) {
-    String descriptionText = 'contact is ' + (contactActive  ? 'open' : 'closed')
+    String newValue = contactActive ? 'open' : 'closed'
+    String currentValue = device.currentValue('contact')
+    String descriptionText = "contact is ${newValue}"
     descriptionText += isDigital ? ' [digital]' : ''
     Map statsMap = stringToJsonMap(state.stats)
     Map lastTxMap = stringToJsonMap(state.lastTx)
     // if contact is changed and contactPoll time is less than 10 seconds ago, increment the stats.outOfSync counter
     if (setting?.pollContactStatus == true) {
-        if ((contactActive ? 'open' : 'closed') != device.currentValue('contact') && isDigital == false) {
+        if (newValue != currentValue && isDigital == false) {
             int timeElapsed = Math.round((now() - (lastTxMap['contactPoll'] ?: now())) / 1)
-            logDebug "sendContactEvent: contact status changed from ${device.currentValue('contact')} to ${contactActive ? 'open' : 'closed'} timeElapsed = ${timeElapsed} ms"
+            logDebug "sendContactEvent: contact status changed from ${currentValue} to ${newValue} timeElapsed = ${timeElapsed} ms"
             if (timeElapsed < 10000) {
                 try {statsMap['outOfSync']++} catch (e) {statsMap['outOfSync'] = 1; }
-                logInfo "<b>contact status synchronized</b> from ${device.currentValue('contact')} to ${contactActive ? 'open' : 'closed'}"
+                logInfo "<b>contact status synchronized</b> from ${currentValue} to ${newValue}"
                 descriptionText += ' [outOfSync]'
             }
         }
     }
-    sendEvent(
-            name: 'contact',
-            value: contactActive ? 'open' : 'closed',
-            //isStateChange   : true,
-            type: isDigital == true ? 'digital' : 'physical',
-            descriptionText: descriptionText
-    )
-    logInfo "${descriptionText}" 
+    if (newValue != currentValue || isDigital == true) {
+        sendEvent(
+                name: 'contact',
+                value: newValue,
+                type: isDigital == true ? 'digital' : 'physical',
+                descriptionText: descriptionText
+        )
+        logInfo "${descriptionText}"
+    } else {
+        logDebug "sendContactEvent: contact is already ${newValue} - skipped"
+    }
     state.stats = mapToJsonString(statsMap)
 }
 
@@ -887,6 +983,65 @@ void tamperEvent(value) {
     sendEvent(map)
 }
 
+// Generic helpers for sleepy device deferred-command delivery
+void setPendingCmds(List<String> cmds) {
+    state.pendingCmds = groovy.json.JsonOutput.toJson(cmds)
+    int count = cmds.count { it.startsWith('he ') }
+    logDebug "setPendingCmds: stored ${count} pending commands"
+}
+boolean hasPendingCmds() {
+    return state.pendingCmds != null && state.pendingCmds != '[]' && state.pendingCmds != 'null'
+}
+void sendAndClearPendingCmds(String reason = 'wake') {
+    List<String> cmds = new groovy.json.JsonSlurper().parseText(state.pendingCmds ?: '[]') as List<String>
+    if (cmds) {
+        int count = cmds.count { it.startsWith('he ') }
+        logInfo "Sending pending config (${reason}): ${count} commands"
+        sendZigbeeCommands(cmds)
+    }
+    state.pendingCmds = null
+    Map lastTxMap = stringToJsonMap(state.lastTx)
+    lastTxMap.pendingCmdsSentAt = now()
+    state.lastTx = mapToJsonString(lastTxMap)
+}
+
+List<String> sendPressureSensorConfigCmds() {
+    List<String> cmds = []
+    Map<String, Integer> sensitivityMap = ['low': 0, 'middle': 1, 'high': 2]
+    int sensitivityValue          = sensitivityMap[settings?.pressureSensitivity ?: pressureSensitivityOptions.defaultValue] ?: 1
+    int noPressureDelayValue      = safeToInt(settings?.noPressureDelay, 10)
+    int pressureDelayValue        = safeToInt(settings?.pressureDelay, 10)
+    int reportingIntervalValue    = safeToInt(settings?.pressureReportingInterval, 60)
+    cmds += sendTuyaCommand('09', DP_TYPE_ENUM,  zigbee.convertToHexString(sensitivityValue, 2))
+    cmds += sendTuyaCommand('65', DP_TYPE_VALUE, zigbee.convertToHexString(reportingIntervalValue, 8))
+    cmds += sendTuyaCommand('66', DP_TYPE_VALUE, zigbee.convertToHexString(noPressureDelayValue, 8))
+    cmds += sendTuyaCommand('67', DP_TYPE_VALUE, zigbee.convertToHexString(pressureDelayValue, 8))
+    return cmds
+}
+
+void sendPressureSensorConfig(String reason = 'rejoin') {
+    int noPressureDelayValue   = safeToInt(settings?.noPressureDelay, 10)
+    int pressureDelayValue     = safeToInt(settings?.pressureDelay, 10)
+    int reportingIntervalValue = safeToInt(settings?.pressureReportingInterval, 60)
+    logInfo "Pressure sensor config sent (${reason}): sensitivity=${settings?.pressureSensitivity ?: pressureSensitivityOptions.defaultValue}, noPressureDelay=${noPressureDelayValue}s, pressureDelay=${pressureDelayValue}s, reportingInterval=${reportingIntervalValue}s"
+    sendZigbeeCommands(sendPressureSensorConfigCmds())
+}
+
+void rawPressureEvent(int rawValue) {
+    Integer lastRaw = (device.currentValue('rawPressure') as Integer) ?: 0
+    int delta = Math.abs(rawValue - lastRaw)
+    if (settings?.sendRawPressure != false) {
+        if (delta >= safeToInt(settings?.pressureThreshold, 5)) {
+            sendEvent(name: 'rawPressure', value: rawValue, descriptionText: "${device.displayName} raw pressure is ${rawValue}", type: 'physical', unit: '')
+            logInfo "raw pressure is ${rawValue} (delta=${delta})"
+        } else {
+            logDebug "rawPressureEvent: rawValue=${rawValue} delta=${delta} below threshold (${safeToInt(settings?.pressureThreshold, 5)}) - skipped"
+        }
+    } else {
+        logDebug "rawPressureEvent: rawValue=${rawValue} (sendRawPressure disabled)"
+    }
+}
+
 void illuminanceEventTuya(int illuminance, boolean isDigital = false) {
     //Integer lux = illuminance > 0 ? Math.round(Math.pow(10, (illuminance)) * 10000.0 + 1) : 0
     Integer lux = illuminance > 0 ? Math.round(Math.pow(10, (illuminance / 10000.0))) + 1 : 0
@@ -957,6 +1112,14 @@ void updated() {
         }
     } // SONOFF
 
+    if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+        cmds += sendPressureSensorConfigCmds()
+        int noPressureDelayValue   = safeToInt(settings?.noPressureDelay, 10)
+        int pressureDelayValue     = safeToInt(settings?.pressureDelay, 10)
+        int reportingIntervalValue = safeToInt(settings?.pressureReportingInterval, 60)
+        logInfo "Pressure sensor config: sensitivity=${settings?.pressureSensitivity}, noPressureDelay=${noPressureDelayValue}s, pressureDelay=${pressureDelayValue}s, reportingInterval=${reportingIntervalValue}s"
+    }
+
     state.lastTx = mapToJsonString(lastTxMap)
 
     int pendingConfig = 0
@@ -971,7 +1134,13 @@ void updated() {
     }
 
     if (cmds != []) {
-        sendZigbeeCommands(cmds)
+        if (isSleepyDevice()) {
+            setPendingCmds(cmds)
+            updateInfo('Config pending \u2014 will be sent on next device wake')
+            logInfo 'Sleepy device: config stored, will be sent on next wake'
+        } else {
+            sendZigbeeCommands(cmds)
+        }
     } else {
         logDebug "nothing to send to the device (${getModelGroup()})"
     }
@@ -1114,12 +1283,14 @@ void resetStats() {
             battCfg : '-1,-1,-1'
     ]
     Map lastTx = [
-            battCfgOK : true,
-            cfgTimer : 0
+            battCfgOK        : true,
+            cfgTimer         : 0,
+            pendingCmdsSentAt: null
     ]
     state.stats = mapToJsonString(stats)
     state.lastRx = mapToJsonString(lastRx)
     state.lastTx = mapToJsonString(lastTx)
+    state.pendingCmds = null
     logInfo 'Statistics were reset. Press F5 to refresh the device page'
 }
 
@@ -1187,6 +1358,14 @@ void initializeVars(boolean fullInit = true) {
     if (fullInit == true || settings?.pollContactStatus == null) { device.updateSetting('pollContactStatus', false) }
     if (fullInit == true || settings?.pollBatteryStatus == null) { device.updateSetting('pollBatteryStatus', false) }
     if (fullInit == true || settings?.disableIlluminance == null) { device.updateSetting('disableIlluminance', false) }
+    if (getModelGroup() == 'TS0601_PRESSURE_CONTACT_BATT') {
+        if (fullInit == true || settings?.pressureSensitivity == null)        { device.updateSetting('pressureSensitivity', [value: pressureSensitivityOptions.defaultValue, type: 'enum']) }
+        if (fullInit == true || settings?.noPressureDelay == null)            { device.updateSetting('noPressureDelay', [value: 10, type: 'number']) }
+        if (fullInit == true || settings?.pressureDelay == null)              { device.updateSetting('pressureDelay', [value: 10, type: 'number']) }
+        if (fullInit == true || settings?.pressureReportingInterval == null)  { device.updateSetting('pressureReportingInterval', [value: 60, type: 'number']) }
+        if (fullInit == true || settings?.sendRawPressure == null)            { device.updateSetting('sendRawPressure', true) }
+        if (fullInit == true || settings?.pressureThreshold == null)          { device.updateSetting('pressureThreshold', [value: 5, type: 'number']) }
+    }
 }
 
 def tuyaBlackMagic() {
@@ -1418,7 +1597,7 @@ void zTest(dpCommand, dpValue, dpTypeString) {
     sendZigbeeCommands(sendTuyaCommand(dpCommand, dpType, dpValHex))
 }
 
-void test(String description) {
+void testParse(String description) {
     log.warn "test parsing : ${description}"
     parse( description)
 }

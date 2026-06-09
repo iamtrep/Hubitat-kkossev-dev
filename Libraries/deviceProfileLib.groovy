@@ -1,8 +1,7 @@
-/* groovylint-disable CompileStatic, CouldBeSwitchStatement, DuplicateListLiteral, DuplicateNumberLiteral, DuplicateStringLiteral, ImplicitClosureParameter, ImplicitReturnStatement, Instanceof, LineLength, MethodCount, MethodSize, NestedBlockDepth, NoDouble, NoFloat, NoWildcardImports, ParameterName, PublicMethodsBeforeNonPublicMethods, UnnecessaryElseStatement, UnnecessaryGetter, UnnecessaryPublicModifier, UnnecessarySetter, UnusedImport */
 library(
     base: 'driver', author: 'Krassimir Kossev', category: 'zigbee', description: 'Device Profile Library', name: 'deviceProfileLib', namespace: 'kkossev',
     importUrl: 'https://raw.githubusercontent.com/kkossev/Hubitat/refs/heads/development/Libraries/deviceProfileLib.groovy', documentationLink: 'https://github.com/kkossev/Hubitat/wiki/libraries-deviceProfileLib',
-    version: '3.5.3'
+    version: '3.5.5'
 )
 /*
  *  Device Profile Library (V3)
@@ -39,7 +38,9 @@ library(
  * ver. 3.5.0  2025-08-14 kkossev  - zclWriteAttribute() support for forced destinationEndpoint in the attributes map
  * ver. 3.5.1  2025-09-15 kkossev  - commonLib ver 4.0.0 allignment; log.trace leftover removed; 
  * ver. 3.5.2  2025-10-04 kkossev  - SIMULATED_DEVICE_MODEL and SIMULATED_DEVICE_MANUFACTURER added (for testing with simulated devices)
- * ver. 3.5.3  2025-12-06 kkossev  - (dev. branch) added digital/physical type to events in customProcessDeviceProfileEvent()
+ * ver. 3.5.3  2025-12-06 kkossev  - added digital/physical type to events in customProcessDeviceProfileEvent()
+ * ver. 3.5.4  2026-02-04 kkossev  - changed inputIt min param rounding to floor instead of ceil
+ * ver. 3.5.5  2026-03-05 kkossev  - added deviceProfilesV3defaults?.defaultCommands
  *
  *                                   TODO - remove the 2-in-1 patch !
  *                                   TODO - add updateStateUnknownDPs (from the 4-in-1 driver)
@@ -51,8 +52,8 @@ library(
  *
 */
 
-static String deviceProfileLibVersion()   { '3.5.3' }
-static String deviceProfileLibStamp() { '2025/12/06 10:22 PM' }
+static String deviceProfileLibVersion()   { '3.5.5' }
+static String deviceProfileLibStamp() { '2026/03/05 5:15 PM' }
 import groovy.json.*
 import groovy.transform.Field
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
@@ -636,7 +637,7 @@ public boolean sendAttribute(String par=null, val=null ) {
             return true
         }
         else {
-            logWarn "sendAttribute: customSetFunction <b>$customSetFunction</b>(<b>$scaledValue</b>) returned null or empty list, continue with the default processing"
+            logDebug "sendAttribute: customSetFunction <b>$customSetFunction</b>(<b>$scaledValue</b>) returned null or empty list, continue with the default processing"
         // continue with the default processing
         }
     }
@@ -659,7 +660,7 @@ public boolean sendAttribute(String par=null, val=null ) {
         return true
     }
     else {
-        logDebug "sendAttribute: not a virtual device (device.controllerType = ${device.controllerType}), continue "
+        logTrace "sendAttribute: not a virtual device (device.controllerType = ${device.controllerType}), continue "
     }
     boolean isTuyaDP
     /* groovylint-disable-next-line NoDef, VariableTypeRequired */
@@ -716,25 +717,33 @@ public boolean sendCommand(final String command_orig=null, final String val_orig
     final String command = command_orig?.trim()
     final String val = val_orig?.trim()
     List<String> cmds = []
-    Map supportedCommandsMap = DEVICE?.commands as Map
-    if (supportedCommandsMap == null || supportedCommandsMap?.isEmpty()) {
+    // merge default commands with device-specific commands (device-specific takes precedence)
+    Map allCommandsMap = [:] 
+    if (deviceProfilesV3defaults?.defaultCommands != null) { allCommandsMap.putAll(deviceProfilesV3defaults.defaultCommands) }
+    if (DEVICE?.commands != null) { allCommandsMap.putAll(DEVICE.commands) }
+    if (allCommandsMap.isEmpty()) {
         logInfo "sendCommand: no commands defined for device profile ${getDeviceProfile()} !"
         return false
     }
-    // TODO: compare ignoring the upper/lower case of the command.
-    List supportedCommandsList =  DEVICE?.commands?.keySet() as List
-    // check if the command is defined in the DEVICE commands map
-    if (command == null || !(command in supportedCommandsList)) {
-        logInfo "sendCommand: the command <b>${(command ?: '')}</b> for device profile '${DEVICE?.description}' must be one of these : ${supportedCommandsList}"
+    // build case-insensitive command lookup map (lowercase -> actual command name)
+    Map<String, String> commandLookupMap = [:]
+    allCommandsMap.each { k, v -> 
+        commandLookupMap[k.toLowerCase()] = k 
+    }
+    // find the actual command name (case-insensitive lookup)
+    String actualCommand = command != null ? commandLookupMap[command.toLowerCase()] : null
+    if (actualCommand == null) {
+        logInfo "sendCommand: the command <b>${(command ?: '')}</b> for device profile '${DEVICE?.description}' must be one of these : ${commandLookupMap.values()}"
         return false
     }
     /* groovylint-disable-next-line NoDef, VariableTypeRequired */
     def func, funcResult
     try {
-        func = DEVICE?.commands.find { it.key == command }.value
+        // look up function from merged commands map
+        func = allCommandsMap.find { it.key == actualCommand }?.value
         // added 01/25/2025 : the commands now can be shorted : instead of a map kay and value 'printFingerprints':'printFingerprints' we can skip the value when it is the same:  'printFingerprints:'  - the value is the same as the key
         if (func == null || func == '') {
-            func = command
+            func = actualCommand
         }
         if (val != null && val != '') {
             logInfo "executed <b>$func</b>($val)"
@@ -813,7 +822,7 @@ public Map inputIt(String paramPar, boolean debug = false) {
     if (input.type in ['number', 'decimal']) {
         if (foundMap.min != null && foundMap.max != null) {
             //input.range = "${foundMap.min}..${foundMap.max}"
-            input.range = "${Math.ceil(foundMap.min) as int}..${Math.ceil(foundMap.max) as int}"
+            input.range = "${Math.floor(foundMap.min) as int}..${Math.ceil(foundMap.max) as int}"
         }
         if (input.range != null && input.description != null) {
             if (input.description != '') { input.description += '<br>' }
